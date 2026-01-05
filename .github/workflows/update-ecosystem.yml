@@ -1,0 +1,81 @@
+name: Update DrZo Ecosystem Listings
+
+on:
+  schedule:
+    # Run every Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+    # Allow manual triggering
+    inputs:
+      full_scan:
+        description: 'Perform full ecosystem scan'
+        required: false
+        default: 'true'
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  ECOSYSTEM_USER: drzo
+
+jobs:
+  update-ecosystem:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests pyyaml
+
+      - name: Query GitHub GraphQL API for ecosystem data
+        env:
+          GITHUB_TOKEN: ${{ secrets.ECOSYSTEM_PAT }}
+        run: |
+          python scripts/query_ecosystem.py
+
+      - name: Generate ecosystem reports
+        run: |
+          python scripts/generate_reports.py
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add data/ README.md
+          
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "🔄 Update ecosystem listings - $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
+
+  notify:
+    needs: update-ecosystem
+    runs-on: ubuntu-latest
+    if: failure()
+    
+    steps:
+      - name: Create issue on failure
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Ecosystem Update Failed',
+              body: `The weekly ecosystem update workflow failed.\n\nRun: ${context.runId}\nTime: ${new Date().toISOString()}\n\nPlease check the workflow logs for details.`,
+              labels: ['bug', 'automated']
+            })
