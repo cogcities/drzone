@@ -2,6 +2,7 @@
 """
 DrZo Ecosystem Query Script
 Queries GitHub GraphQL API to collect ecosystem data including:
+- Enterprises
 - Organizations
 - Repositories
 - Users (followers/following)
@@ -68,12 +69,65 @@ def get_user_info() -> dict:
         repositories { totalCount }
         starredRepositories { totalCount }
         organizations { totalCount }
+        enterprises { totalCount }
         gists { totalCount }
       }
     }
     """
     result = graphql_query(query)
     return result.get("data", {}).get("viewer", {})
+
+
+def get_enterprises() -> list:
+    """Get all enterprises the user is a member of."""
+    enterprises = []
+    cursor = None
+    
+    while True:
+        query = """
+        query($cursor: String) {
+          viewer {
+            enterprises(first: 100, after: $cursor) {
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+              nodes {
+                name
+                slug
+                url
+                description
+                createdAt
+                viewerIsAdmin
+                organizations(first: 100) {
+                  totalCount
+                  nodes {
+                    login
+                    name
+                    description
+                    url
+                    repositories { totalCount }
+                    membersWithRole { totalCount }
+                  }
+                }
+                members {
+                  totalCount
+                }
+              }
+            }
+          }
+        }
+        """
+        result = graphql_query(query, {"cursor": cursor})
+        data = result.get("data", {}).get("viewer", {}).get("enterprises", {})
+        
+        enterprises.extend(data.get("nodes", []))
+        
+        if not data.get("pageInfo", {}).get("hasNextPage"):
+            break
+        cursor = data["pageInfo"]["endCursor"]
+    
+    return enterprises
 
 
 def get_organizations(user: str = None) -> list:
@@ -353,37 +407,46 @@ def main():
         exit(1)
     
     # Query all data
-    print("\n[1/7] Querying user info...")
+    print("\n[1/8] Querying user info...")
     user_info = get_user_info()
     save_data("user_info.json", user_info)
     print(f"  User: {user_info.get('login')}")
     
-    print("\n[2/7] Querying organizations...")
+    print("\n[2/8] Querying enterprises...")
+    enterprises = get_enterprises()
+    save_data("enterprises.json", enterprises)
+    print(f"  Found {len(enterprises)} enterprises")
+    for ent in enterprises:
+        org_count = ent.get('organizations', {}).get('totalCount', 0)
+        member_count = ent.get('members', {}).get('totalCount', 0)
+        print(f"    - {ent.get('name')} ({ent.get('slug')}): {org_count} orgs, {member_count} members")
+    
+    print("\n[3/8] Querying organizations...")
     orgs = get_organizations()
     save_data("organizations.json", orgs)
     print(f"  Found {len(orgs)} organizations")
     
-    print("\n[3/7] Querying repositories (up to 1000)...")
+    print("\n[4/8] Querying repositories (up to 1000)...")
     repos = get_repositories(limit=1000)
     save_data("repositories.json", repos)
     print(f"  Found {len(repos)} repositories")
     
-    print("\n[4/7] Querying followers...")
+    print("\n[5/8] Querying followers...")
     followers = get_followers()
     save_data("followers.json", followers)
     print(f"  Found {len(followers)} followers")
     
-    print("\n[5/7] Querying following...")
+    print("\n[6/8] Querying following...")
     following = get_following()
     save_data("following.json", following)
     print(f"  Found {len(following)} following")
     
-    print("\n[6/7] Querying starred repositories...")
+    print("\n[7/8] Querying starred repositories...")
     starred = get_starred_repos()
     save_data("starred_repos.json", starred)
     print(f"  Found {len(starred)} starred repos")
     
-    print("\n[7/7] Querying gists...")
+    print("\n[8/8] Querying gists...")
     gists = get_gists()
     save_data("gists.json", gists)
     print(f"  Found {len(gists)} gists")
@@ -393,13 +456,25 @@ def main():
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "user": user_info.get("login"),
         "counts": {
+            "enterprises": len(enterprises),
             "organizations": len(orgs),
             "repositories": len(repos),
             "followers": len(followers),
             "following": len(following),
             "starred_repos": len(starred),
             "gists": len(gists),
-        }
+        },
+        "enterprises": [
+            {
+                "name": e.get("name"),
+                "slug": e.get("slug"),
+                "url": e.get("url"),
+                "organizations_count": e.get("organizations", {}).get("totalCount", 0),
+                "members_count": e.get("members", {}).get("totalCount", 0),
+                "is_admin": e.get("viewerIsAdmin", False)
+            }
+            for e in enterprises
+        ]
     }
     save_data("summary.json", summary)
     

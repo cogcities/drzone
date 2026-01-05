@@ -25,6 +25,7 @@ def generate_readme():
     """Generate the main README.md with ecosystem overview."""
     summary = load_json("summary.json")
     user_info = load_json("user_info.json")
+    enterprises = load_json("enterprises.json") or []
     orgs = load_json("organizations.json") or []
     repos = load_json("repositories.json") or []
     
@@ -38,6 +39,9 @@ def generate_readme():
     # Analyze repositories
     repo_stats = analyze_repositories(repos)
     
+    # Map organizations to enterprises
+    enterprise_org_map = map_orgs_to_enterprises(enterprises)
+    
     # Generate README content
     content = f"""# DrZone - Ecosystem Dashboard
 
@@ -49,6 +53,7 @@ def generate_readme():
 
 | Metric | Count |
 |--------|-------|
+| Enterprises | {summary['counts'].get('enterprises', 0)} |
 | Organizations | {summary['counts']['organizations']} |
 | Repositories | {summary['counts']['repositories']} |
 | Followers | {summary['counts']['followers']} |
@@ -56,7 +61,42 @@ def generate_readme():
 | Starred Repos | {summary['counts']['starred_repos']} |
 | Gists | {summary['counts']['gists']} |
 
-## 🏢 Organization Categories
+## 🏛️ Enterprises
+
+"""
+    
+    if enterprises:
+        content += "| Enterprise | Slug | Organizations | Members | Admin |\n"
+        content += "|------------|------|---------------|---------|-------|\n"
+        for ent in enterprises:
+            name = ent.get('name', 'Unknown')
+            slug = ent.get('slug', '')
+            url = ent.get('url', f'https://github.com/enterprises/{slug}')
+            org_count = ent.get('organizations', {}).get('totalCount', 0)
+            member_count = ent.get('members', {}).get('totalCount', 0)
+            is_admin = "✅" if ent.get('viewerIsAdmin') else "❌"
+            content += f"| [{name}]({url}) | `{slug}` | {org_count} | {member_count} | {is_admin} |\n"
+        
+        content += "\n### Enterprise → Organization Mapping\n\n"
+        for ent in enterprises:
+            ent_name = ent.get('name', 'Unknown')
+            ent_slug = ent.get('slug', '')
+            ent_orgs = ent.get('organizations', {}).get('nodes', [])
+            if ent_orgs:
+                content += f"#### {ent_name} (`{ent_slug}`)\n\n"
+                content += "| Organization | Repos | Members | Description |\n"
+                content += "|--------------|-------|---------|-------------|\n"
+                for org in sorted(ent_orgs, key=lambda x: x.get('repositories', {}).get('totalCount', 0), reverse=True):
+                    login = org.get('login', 'Unknown')
+                    repo_count = org.get('repositories', {}).get('totalCount', 0)
+                    member_count = org.get('membersWithRole', {}).get('totalCount', 0)
+                    desc = (org.get('description') or 'No description')[:40]
+                    content += f"| [{login}](https://github.com/{login}) | {repo_count} | {member_count} | {desc} |\n"
+                content += "\n"
+    else:
+        content += "*No enterprise data available*\n\n"
+    
+    content += """## 🏢 Organization Categories
 
 """
     
@@ -116,6 +156,7 @@ def generate_readme():
 The following data files are automatically updated:
 
 - [`data/summary.json`](data/summary.json) - Overview statistics
+- [`data/enterprises.json`](data/enterprises.json) - Enterprise details
 - [`data/organizations.json`](data/organizations.json) - Organization details
 - [`data/repositories.json`](data/repositories.json) - Repository listings
 - [`data/followers.json`](data/followers.json) - Follower information
@@ -138,6 +179,20 @@ You can also trigger a manual update from the [Actions tab](../../actions/workfl
         f.write(content)
     
     print("Generated README.md")
+
+
+def map_orgs_to_enterprises(enterprises: list) -> dict:
+    """Create a mapping of organization logins to their parent enterprise."""
+    mapping = {}
+    for ent in enterprises:
+        ent_name = ent.get('name', 'Unknown')
+        ent_slug = ent.get('slug', '')
+        for org in ent.get('organizations', {}).get('nodes', []):
+            mapping[org.get('login')] = {
+                'enterprise_name': ent_name,
+                'enterprise_slug': ent_slug
+            }
+    return mapping
 
 
 def categorize_organizations(orgs: list) -> dict:
